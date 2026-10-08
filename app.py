@@ -9,8 +9,34 @@ from typing import Any
 from flask import Flask, abort, flash, g, redirect, render_template, request, url_for
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = Path(os.environ.get("RECIPE_DB_PATH", BASE_DIR / "instance" / "recipes.db"))
-app = Flask(__name__)
+
+
+def get_default_db_path() -> Path:
+    # On Vercel, AWS Lambda, or environments where VERCEL env var is set,
+    # the root filesystem is read-only. Writable data must reside in /tmp.
+    if os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+        return Path("/tmp/recipes.db")
+
+    # If instance directory cannot be written to, fallback to system temp directory
+    instance_dir = BASE_DIR / "instance"
+    try:
+        instance_dir.mkdir(parents=True, exist_ok=True)
+        test_file = instance_dir / ".write_test"
+        test_file.touch()
+        test_file.unlink()
+        return instance_dir / "recipes.db"
+    except (OSError, PermissionError):
+        import tempfile
+        return Path(tempfile.gettempdir()) / "recipes.db"
+
+
+DB_PATH = Path(os.environ.get("RECIPE_DB_PATH", str(get_default_db_path())))
+
+app = Flask(
+    __name__,
+    template_folder=str(BASE_DIR / "templates"),
+    static_folder=str(BASE_DIR / "static"),
+)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "local-development-key-change-me")
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 
@@ -21,7 +47,7 @@ def inject_nav_counts() -> dict[str, int]:
         db = get_db()
         return {"nav_recipe_count": db.execute("SELECT COUNT(*) FROM recipes").fetchone()[0],
                 "nav_ingredient_count": db.execute("SELECT COUNT(*) FROM ingredients").fetchone()[0]}
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, Exception):
         return {"nav_recipe_count": 0, "nav_ingredient_count": 0}
 
 SCHEMA = """
@@ -81,8 +107,11 @@ SEED_RECIPES = [
 
 def get_db() -> sqlite3.Connection:
     if "db" not in g:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        g.db = sqlite3.connect(DB_PATH)
+        try:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        except (OSError, PermissionError):
+            pass
+        g.db = sqlite3.connect(str(DB_PATH))
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON")
     return g.db
@@ -102,12 +131,18 @@ def init_db() -> None:
         for name, category, notes in SEED_INGREDIENTS:
             db.execute("INSERT OR IGNORE INTO ingredients(name,category,notes) VALUES(?,?,?)", (name, category, notes))
         for name, description, category, instructions, prep, cook, servings, items in SEED_RECIPES:
-            cur = db.execute("INSERT INTO recipes(name,description,category,instructions,prep_minutes,cook_minutes,servings) VALUES(?,?,?,?,?,?,?)",
+            cur = db.execute("INSERT OR IGNORE INTO recipes(name,description,category,instructions,prep_minutes,cook_minutes,servings) VALUES(?,?,?,?,?,?,?)",
                              (name, description, category, instructions, prep, cook, servings))
-            for ingredient, quantity, unit in items:
-                ing = db.execute("SELECT id FROM ingredients WHERE name=? COLLATE NOCASE", (ingredient,)).fetchone()
-                db.execute("INSERT INTO recipe_ingredients(recipe_id,ingredient_id,quantity,unit) VALUES(?,?,?,?)",
-                           (cur.lastrowid, ing["id"], quantity, unit))
+            recipe_id = cur.lastrowid
+            if not recipe_id:
+                existing = db.execute("SELECT id FROM recipes WHERE name=?", (name,)).fetchone()
+                recipe_id = existing["id"] if existing else None
+            if recipe_id:
+                for ingredient, quantity, unit in items:
+                    ing = db.execute("SELECT id FROM ingredients WHERE name=? COLLATE NOCASE", (ingredient,)).fetchone()
+                    if ing:
+                        db.execute("INSERT OR IGNORE INTO recipe_ingredients(recipe_id,ingredient_id,quantity,unit) VALUES(?,?,?,?)",
+                                   (recipe_id, ing["id"], quantity, unit))
     db.commit()
 
 
@@ -324,6 +359,13 @@ def database_info():
 @app.errorhandler(404)
 def not_found(_error):
     return render_template("404.html"), 404
+
+
+@app.errorhandler(500)
+def server_error(error):
+    import traceback
+    app.logger.error("Internal Server Error: %s\n%s", error, traceback.format_exc())
+    return render_template("500.html", error=error), 500
 
 
 if __name__ == "__main__":
