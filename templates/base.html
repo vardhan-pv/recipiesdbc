@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8f8f5"><title>{% block title %}Pantry & Plate{% endblock %} · Pantry & Plate</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark">P</span><span>Pantry<span class="brand-light"> & Plate</span><small>RECIPE DATABASE</small></span></a>
+    <div class="nav-label">WORKSPACE</div>
+    <nav>
+      <a class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}"><span>⌂</span> Overview</a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('recipe') %}active{% endif %}" href="{{ url_for('recipes') }}"><span>▤</span> Recipes <b>{{ nav_recipe_count }}</b></a>
+      <a class="nav-link {% if request.endpoint and request.endpoint.startswith('ingredient') %}active{% endif %}" href="{{ url_for('ingredients') }}"><span>◈</span> Ingredients <b>{{ nav_ingredient_count }}</b></a>
+      <a class="nav-link {% if request.endpoint == 'shopping_list' %}active{% endif %}" href="{{ url_for('shopping_list') }}"><span>☷</span> Shopping list</a>
+    </nav>
+    <div class="nav-label database-label">DATABASE</div>
+    <a class="nav-link {% if request.endpoint == 'database_info' %}active{% endif %}" href="{{ url_for('database_info') }}"><span>▦</span> Schema & relationships</a>
+    <div class="sidebar-bottom"><div class="status-dot"></div><span>Local database</span><small>SQLite · Ready</small></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div class="crumb">BDA PROJECT <span>/</span> {% block crumb %}OVERVIEW{% endblock %}</div><div class="profile"><span class="avatar">VR</span><span>Recipe workspace</span></div></header>
+    <section class="content">
+      {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}<button onclick="this.parentElement.remove()">×</button></div>{% endfor %}</div>{% endif %}{% endwith %}
+      {% block content %}{% endblock %}
+      <footer>Pantry & Plate <span>·</span> Recipe Ingredient Database <span>·</span> Built for BDA coursework</footer>
+    </section>
+  </main>
+</div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body></html>
