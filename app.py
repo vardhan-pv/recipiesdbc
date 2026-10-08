@@ -41,6 +41,38 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "local-development-key-c
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 
 
+class VercelPathMiddleware:
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        path = environ.get("PATH_INFO", "")
+
+        matched = (
+            environ.get("HTTP_X_MATCHED_PATH")
+            or environ.get("HTTP_X_FORWARDED_URI")
+            or environ.get("HTTP_X_ORIGINAL_URL")
+            or environ.get("REQUEST_URI")
+        )
+        if matched:
+            matched_clean = matched.split("?")[0]
+            if not matched_clean.startswith("/api/index"):
+                path = matched_clean
+
+        if path in ("/api/index", "/api/index.py", "/api", "/api/"):
+            path = "/"
+        elif path.startswith("/api/index/"):
+            path = path[len("/api/index"):]
+        elif path.startswith("/api/index.py/"):
+            path = path[len("/api/index.py"):]
+
+        environ["PATH_INFO"] = path if (path and path.startswith("/")) else ("/" + path if path else "/")
+        return self.wsgi_app(environ, start_response)
+
+
+app.wsgi_app = VercelPathMiddleware(app.wsgi_app)
+
+
 @app.context_processor
 def inject_nav_counts() -> dict[str, int]:
     try:
@@ -221,6 +253,8 @@ def save_recipe(data: dict[str, Any], selected: list[tuple[int, float, str]], re
 
 
 @app.route("/")
+@app.route("/api/index")
+@app.route("/api/index.py")
 def dashboard():
     db = get_db()
     stats = {"recipes": db.execute("SELECT COUNT(*) FROM recipes").fetchone()[0],
